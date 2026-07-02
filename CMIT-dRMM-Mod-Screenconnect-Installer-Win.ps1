@@ -80,146 +80,58 @@ function verifyPackage ($file, $certificate, $thumbprint, $name, $url) { #verify
 
 function createJoinLink {
     try {
-        $ServiceRegPath  = "HKLM:\SYSTEM\CurrentControlSet\Services\ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)"
-        $CentraStagePath = "HKLM:\Software\CentraStage"
+        $null = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)" -Name ImagePath).ImagePath -Match '(&s=[a-f0-9\-]*)'
 
-        Write-Host "- ScreenConnect service registry path:"
-        Write-Host "  $ServiceRegPath"
-
-        if (!(Test-Path $ServiceRegPath)) {
-            Write-Host "! ERROR: ScreenConnect service registry path was not found."
-            Write-Host "  Expected path: $ServiceRegPath"
-            exit 1
-        }
-
-        $ImagePath = (Get-ItemProperty -Path $ServiceRegPath -Name ImagePath -ErrorAction Stop).ImagePath
-
-        Write-Host "- ScreenConnect ImagePath:"
-        Write-Host "  $ImagePath"
-
-        $SessionMatch = [regex]::Match($ImagePath, '(?:\?|&)s=([a-f0-9\-]{36})', 'IgnoreCase')
-
-        if (!$SessionMatch.Success) {
-            Write-Host "! ERROR: Unable to locate ScreenConnect session GUID in ImagePath."
-            Write-Host "  Expected to find a parameter like: &s=<guid>"
-            exit 1
-        }
-
-        $GUID = $SessionMatch.Groups[1].Value
-
-        Write-Host "- ScreenConnect session GUID detected:"
-        Write-Host "  $GUID"
+        $GUID = $Matches[0] -replace '&s='
 
         $apiLaunchUrl = "$($env:ConnectWiseControlBaseUrl)Host#Access///$GUID/Join"
 
-        Write-Host "- ScreenConnect join URL:"
-        Write-Host "  $apiLaunchUrl"
-
-        # -----------------------------------------------------------------------------------------
-        # UDF handling
-        # -----------------------------------------------------------------------------------------
-
-        if ([string]::IsNullOrWhiteSpace($env:usrUDF)) {
-            Write-Host "- usrUDF is blank. Skipping UDF registry write."
-            return
-        }
-
-        if ($env:usrUDF -eq "0") {
-            Write-Host "- usrUDF is set to 0. Skipping UDF registry write by design."
-            return
-        }
-
-        if ($env:usrUDF -notmatch '^\d+$') {
-            Write-Host "! ERROR: usrUDF is not a valid number."
-            Write-Host "  usrUDF value: $env:usrUDF"
-            exit 1
-        }
-
         $PropertyName = "Custom$env:usrUDF"
 
-        Write-Host "- Target Datto UDF:"
-        Write-Host "  UDF#$env:usrUDF"
-        Write-Host "- Target registry property:"
-        Write-Host "  $PropertyName"
-        Write-Host "- Target registry path:"
-        Write-Host "  $CentraStagePath"
+        Write-Host "- ScreenConnect GUID: $GUID"
+        Write-Host "- ScreenConnect URL:"
+        Write-Host "  $apiLaunchUrl"
 
-        if (!(Test-Path $CentraStagePath)) {
-            Write-Host "- CentraStage registry path not found. Creating it."
-            New-Item -Path $CentraStagePath -Force | Out-Null
+        if ($env:usrUDF -eq "0") {
+            Write-Host "- usrUDF is 0. Skipping registry write."
+            return
         }
-
-        $BeforeValue = $null
 
         try {
-            $BeforeItem = Get-ItemProperty -Path $CentraStagePath -Name $PropertyName -ErrorAction Stop
-            $BeforeValue = $BeforeItem.PSObject.Properties[$PropertyName].Value
-        }
-        catch {
-            $BeforeValue = $null
-        }
-
-        Write-Host "- Existing local registry value before write:"
-        if ([string]::IsNullOrEmpty($BeforeValue)) {
-            Write-Host "  <blank or not present>"
-        }
-        else {
-            Write-Host "  $BeforeValue"
-        }
-
-        # Create the property if missing, otherwise overwrite it.
-        if ($null -eq $BeforeValue) {
-            Write-Host "- Registry property does not exist. Creating it."
+            Write-Host "- Writing registry value..."
+            Write-Host "  Path: HKLM:\Software\CentraStage"
+            Write-Host "  Name: $PropertyName"
 
             New-ItemProperty `
-                -Path $CentraStagePath `
+                -Path "HKLM:\Software\CentraStage" `
                 -Name $PropertyName `
                 -PropertyType String `
                 -Value $apiLaunchUrl `
-                -Force | Out-Null
-        }
-        else {
-            Write-Host "- Registry property exists. Overwriting it."
+                -Force `
+                -ErrorAction Stop | Out-Null
 
-            Set-ItemProperty `
-                -Path $CentraStagePath `
+            $RegValue = Get-ItemPropertyValue `
+                -Path "HKLM:\Software\CentraStage" `
                 -Name $PropertyName `
-                -Value $apiLaunchUrl `
-                -Force
-        }
+                -ErrorAction Stop
 
-        Start-Sleep -Seconds 1
-
-        $AfterItem = Get-ItemProperty -Path $CentraStagePath -Name $PropertyName -ErrorAction Stop
-        $AfterValue = $AfterItem.PSObject.Properties[$PropertyName].Value
-
-        Write-Host "- Local registry value after write:"
-        if ([string]::IsNullOrEmpty($AfterValue)) {
-            Write-Host "  <blank>"
+            Write-Host "- Registry write verified."
+            Write-Host "  $RegValue"
         }
-        else {
-            Write-Host "  $AfterValue"
-        }
-
-        if ($AfterValue -eq $apiLaunchUrl) {
-            Write-Host "- Registry verification PASSED."
-            Write-Host "  The local registry contains the expected UDF value."
-        }
-        else {
-            Write-Host "! Registry verification FAILED."
-            Write-Host "  Expected:"
-            Write-Host "  $apiLaunchUrl"
-            Write-Host "  Actual:"
-            Write-Host "  $AfterValue"
+        catch {
+            Write-Host "! ERROR: Registry write failed."
+            Write-Host "  $($_.Exception.Message)"
             exit 1
         }
 
-    } catch {
+        Write-Host "- UDF written to UDF#$env:usrUDF."
+    }
+    catch {
         Write-Host "! ERROR: Unable to create a join link to ScreenConnect instance."
         Write-Host "  Please ensure all Component variables are furnished correctly."
         Write-Host ""
         Write-Host ": Error details:"
-        $error | Select-Object *
+        $error | Select *
         exit 1
     }
 }
