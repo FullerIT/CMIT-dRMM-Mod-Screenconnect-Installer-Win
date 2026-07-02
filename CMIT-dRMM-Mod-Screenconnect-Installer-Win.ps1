@@ -1,7 +1,7 @@
 <#
 Script:        CMIT-dRMM-Mod-Screenconnect-Installer-Win.ps1
 Author:        pellis@cmitsolutions.com
-Version:       2026.07.02.002
+Version:       2026.07.02.003
 
 Change Log:
   2026.07.02.003 - Fixing createJoinLink logic
@@ -80,7 +80,7 @@ function verifyPackage ($file, $certificate, $thumbprint, $name, $url) { #verify
 
 function createJoinLink {
     try {
-        $ServiceRegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)"
+        $ServiceRegPath  = "HKLM:\SYSTEM\CurrentControlSet\Services\ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)"
         $CentraStagePath = "HKLM:\Software\CentraStage"
 
         Write-Host "- ScreenConnect service registry path:"
@@ -92,7 +92,7 @@ function createJoinLink {
             exit 1
         }
 
-        $ImagePath = (Get-ItemProperty -Path $ServiceRegPath -Name ImagePath).ImagePath
+        $ImagePath = (Get-ItemProperty -Path $ServiceRegPath -Name ImagePath -ErrorAction Stop).ImagePath
 
         Write-Host "- ScreenConnect ImagePath:"
         Write-Host "  $ImagePath"
@@ -115,28 +115,104 @@ function createJoinLink {
         Write-Host "- ScreenConnect join URL:"
         Write-Host "  $apiLaunchUrl"
 
+        # -----------------------------------------------------------------------------------------
+        # UDF handling
+        # -----------------------------------------------------------------------------------------
+
         if ([string]::IsNullOrWhiteSpace($env:usrUDF)) {
-            Write-Host "! ERROR: usrUDF is blank. Cannot determine which Datto UDF to write."
+            Write-Host "- usrUDF is blank. Skipping UDF registry write."
+            return
+        }
+
+        if ($env:usrUDF -eq "0") {
+            Write-Host "- usrUDF is set to 0. Skipping UDF registry write by design."
+            return
+        }
+
+        if ($env:usrUDF -notmatch '^\d+$') {
+            Write-Host "! ERROR: usrUDF is not a valid number."
+            Write-Host "  usrUDF value: $env:usrUDF"
             exit 1
         }
+
+        $PropertyName = "Custom$env:usrUDF"
+
+        Write-Host "- Target Datto UDF:"
+        Write-Host "  UDF#$env:usrUDF"
+        Write-Host "- Target registry property:"
+        Write-Host "  $PropertyName"
+        Write-Host "- Target registry path:"
+        Write-Host "  $CentraStagePath"
 
         if (!(Test-Path $CentraStagePath)) {
             Write-Host "- CentraStage registry path not found. Creating it."
             New-Item -Path $CentraStagePath -Force | Out-Null
         }
 
-        Set-ItemProperty `
-            -Path $CentraStagePath `
-            -Name "Custom$env:usrUDF" `
-            -Value $apiLaunchUrl `
-            -Force
+        $BeforeValue = $null
 
-        Write-Host "- UDF written to UDF#$env:usrUDF."
+        try {
+            $BeforeItem = Get-ItemProperty -Path $CentraStagePath -Name $PropertyName -ErrorAction Stop
+            $BeforeValue = $BeforeItem.PSObject.Properties[$PropertyName].Value
+        }
+        catch {
+            $BeforeValue = $null
+        }
 
-        $WrittenValue = (Get-ItemProperty -Path $CentraStagePath -Name "Custom$env:usrUDF")."Custom$env:usrUDF"
+        Write-Host "- Existing local registry value before write:"
+        if ([string]::IsNullOrEmpty($BeforeValue)) {
+            Write-Host "  <blank or not present>"
+        }
+        else {
+            Write-Host "  $BeforeValue"
+        }
 
-        Write-Host "- Confirmed UDF registry value:"
-        Write-Host "  $WrittenValue"
+        # Create the property if missing, otherwise overwrite it.
+        if ($null -eq $BeforeValue) {
+            Write-Host "- Registry property does not exist. Creating it."
+
+            New-ItemProperty `
+                -Path $CentraStagePath `
+                -Name $PropertyName `
+                -PropertyType String `
+                -Value $apiLaunchUrl `
+                -Force | Out-Null
+        }
+        else {
+            Write-Host "- Registry property exists. Overwriting it."
+
+            Set-ItemProperty `
+                -Path $CentraStagePath `
+                -Name $PropertyName `
+                -Value $apiLaunchUrl `
+                -Force
+        }
+
+        Start-Sleep -Seconds 1
+
+        $AfterItem = Get-ItemProperty -Path $CentraStagePath -Name $PropertyName -ErrorAction Stop
+        $AfterValue = $AfterItem.PSObject.Properties[$PropertyName].Value
+
+        Write-Host "- Local registry value after write:"
+        if ([string]::IsNullOrEmpty($AfterValue)) {
+            Write-Host "  <blank>"
+        }
+        else {
+            Write-Host "  $AfterValue"
+        }
+
+        if ($AfterValue -eq $apiLaunchUrl) {
+            Write-Host "- Registry verification PASSED."
+            Write-Host "  The local registry contains the expected UDF value."
+        }
+        else {
+            Write-Host "! Registry verification FAILED."
+            Write-Host "  Expected:"
+            Write-Host "  $apiLaunchUrl"
+            Write-Host "  Actual:"
+            Write-Host "  $AfterValue"
+            exit 1
+        }
 
     } catch {
         Write-Host "! ERROR: Unable to create a join link to ScreenConnect instance."
