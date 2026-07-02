@@ -1,10 +1,9 @@
 <#
 Script:        CMIT-dRMM-Mod-Screenconnect-Installer-Win.ps1
 Author:        pellis@cmitsolutions.com
-Version:       2026.07.02.004
+Version:       2026.07.02.003
 
 Change Log:
-  2026.07.02.004 - Fixing installed check logic
   2026.07.02.003 - Fixing createJoinLink logic
   2026.07.02.002 - Fixing the UDF Field Entry and device type stdout
   2026.07.02.001 - First version
@@ -167,35 +166,12 @@ write-host "  $env:ConnectWiseControlInstallerUrl"
 
 #region Installation check --------------------------------------------------------------------------------------------------------
 
-$ServiceName = "ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)"
-$Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-
-if ($Service) {
-    if ($Service.Status -ne 'Running') {
-        Write-Host "- ScreenConnect service exists but is not running."
-        Write-Host "  Attempting to start service..."
-        try {
-            Start-Service -Name $ServiceName -ErrorAction Stop
-            $Service.Refresh()
-            $Service.WaitForStatus('Running','00:00:15')
-            $Service.Refresh()
-        }
-        catch {
-            Write-Host "  Failed to start service. Continuing with reinstall."
-            $Service = $null
-        }
-    }
-    if ($Service -and $Service.Status -eq 'Running') {
-        Write-Host "- ScreenConnect is already installed and running."
-        Write-Host "  Establishing link..."
-        createJoinLink
-        exit
-    }
+if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\ScreenConnect Client ($env:ConnectWiseControlPublicKeyThumbprint)" ) {
+    write-host "- ScreenConnect is already installed."
+    write-host "  Establishing link..."
+    createJoinLink
+    exit
 }
-
-Write-Host "- ScreenConnect not installed correctly (service missing or not running)."
-Write-Host "  Continuing with installation..."
-
 
 #region Download installer --------------------------------------------------------------------------------------------------------
 
